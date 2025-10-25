@@ -253,6 +253,7 @@ class AdoptionSystem(commands.Cog):
                         update_panda_stats(user_id, panda_id, "mood", "excited")
                         update_panda_stats(user_id, panda_id, "total_feeds", 0)
                         update_panda_stats(user_id, panda_id, "total_plays", 0)
+                        update_panda_stats(user_id, panda_id, "custom_name", "")  # Allow renaming
                         break
                 
                 embed = discord.Embed(
@@ -279,7 +280,7 @@ class AdoptionSystem(commands.Cog):
                 )
                 
                 embed.set_thumbnail(url=panda["image_url"])
-                embed.set_footer(text="💡 Use /feed and /play to bond with your new panda! Check /mypandas to see your panda family.")
+                embed.set_footer(text="💡 Use /feed and /play to bond! Try /rename to give them a custom name! Check /mypandas to see your family.")
                 
                 await interaction.followup.send(embed=embed)
             else:
@@ -436,6 +437,9 @@ class AdoptionSystem(commands.Cog):
                 experience = adopted.get('experience', 0)
                 total_feeds = adopted.get('total_feeds', 0)
                 total_plays = adopted.get('total_plays', 0)
+                custom_name = adopted.get('custom_name', '')
+                
+                display_name = custom_name if custom_name else panda['name']
                 
                 total_happiness += happiness
                 total_level += level
@@ -482,7 +486,7 @@ class AdoptionSystem(commands.Cog):
                 )
                 
                 embed.add_field(
-                    name=f"🐼 {panda['name']} ({panda['age']})",
+                    name=f"🐼 {display_name} ({panda['age']})",
                     value=field_value,
                     inline=True
                 )
@@ -512,7 +516,7 @@ class AdoptionSystem(commands.Cog):
                 inline=False
             )
             
-            embed.set_footer(text="💡 Use /feed <panda_id> and /play <panda_id> to interact! Happy pandas give better rewards!")
+            embed.set_footer(text="💡 Use /feed <panda_id> and /play <panda_id> to interact! Try /pandastats and /rename too!")
             await interaction.followup.send(embed=embed)
         
         except Exception as e:
@@ -526,6 +530,335 @@ class AdoptionSystem(commands.Cog):
                 name="🔧 Try Again:",
                 value="• Wait a moment and retry\n• Your panda data is securely stored!",
                 inline=False
+            )
+            await interaction.followup.send(embed=embed)
+    
+    @app_commands.command(name="pandastats", description="📊 View detailed statistics for one of your pandas")
+    @app_commands.describe(panda_id="ID of the panda to view detailed stats for")
+    async def pandastats_cmd(self, interaction: discord.Interaction, panda_id: str):
+        await interaction.response.defer()
+        
+        try:
+            user_id = str(interaction.user.id)
+            user_pandas = get_user_pandas(user_id)
+            
+            # Find owned panda
+            owned_panda = None
+            for adopted in user_pandas:
+                if adopted["panda_id"] == panda_id:
+                    owned_panda = adopted
+                    break
+            
+            if not owned_panda:
+                embed = discord.Embed(
+                    title="❌ Panda Not Found",
+                    description=f"You don't own a panda with ID: `{panda_id}`",
+                    color=0xe74c3c
+                )
+                
+                if user_pandas:
+                    panda_list = "\n".join([f"• {get_panda_by_id(p['panda_id'])['name'] if get_panda_by_id(p['panda_id']) else 'Unknown'} (ID: `{p['panda_id']}`)" for p in user_pandas[:3]])
+                    embed.add_field(
+                        name="🐼 Your Pandas:",
+                        value=panda_list,
+                        inline=False
+                    )
+                
+                await interaction.followup.send(embed=embed)
+                return
+            
+            panda_info = get_panda_by_id(panda_id)
+            if not panda_info:
+                embed = discord.Embed(
+                    title="🚨 Data Error",
+                    description="Panda data temporarily unavailable. Please try again!",
+                    color=0xe74c3c
+                )
+                await interaction.followup.send(embed=embed)
+                return
+            
+            # Get all panda stats
+            happiness = owned_panda.get('happiness', 100)
+            level = owned_panda.get('level', 1)
+            experience = owned_panda.get('experience', 0)
+            total_feeds = owned_panda.get('total_feeds', 0)
+            total_plays = owned_panda.get('total_plays', 0)
+            custom_name = owned_panda.get('custom_name', '')
+            favorite_activity = owned_panda.get('favorite_activity', 'playing')
+            mood = owned_panda.get('mood', 'happy')
+            
+            display_name = custom_name if custom_name else panda_info['name']
+            
+            # Calculate detailed statistics
+            adoption_date = datetime.fromisoformat(owned_panda.get("adoption_date", owned_panda["adopted_date"]))
+            days_together = (datetime.utcnow() - adoption_date).days
+            
+            # Experience to next level
+            exp_needed = level * 100
+            exp_progress = min(experience, exp_needed)
+            exp_remaining = max(0, exp_needed - experience)
+            progress_percentage = (exp_progress / exp_needed) * 100 if exp_needed > 0 else 100
+            
+            # Activity analysis
+            total_interactions = total_feeds + total_plays
+            if total_interactions > 0:
+                feed_ratio = (total_feeds / total_interactions) * 100
+                play_ratio = (total_plays / total_interactions) * 100
+            else:
+                feed_ratio = play_ratio = 0
+            
+            # Time since last interactions
+            last_fed = datetime.fromisoformat(owned_panda["last_fed"])
+            last_played = datetime.fromisoformat(owned_panda["last_played"])
+            
+            fed_cooldown = (datetime.utcnow() - last_fed).total_seconds()
+            play_cooldown = (datetime.utcnow() - last_played).total_seconds()
+            
+            # Happiness and status
+            happiness_emoji, happiness_msg = self.get_happiness_message(happiness)
+            
+            # Create detailed stats embed
+            embed = discord.Embed(
+                title=f"📊 Detailed Stats: {display_name}",
+                description=f"**{panda_info['personality']}** panda who **{panda_info['special_trait'].lower()}**\n\n{happiness_emoji} *{happiness_msg}*",
+                color=0x3498db
+            )
+            
+            # Basic info section
+            embed.add_field(
+                name="📋 Basic Info",
+                value=f"**Original Name:** {panda_info['name']}\n"
+                      f"**Custom Name:** {custom_name if custom_name else 'None set'}\n"
+                      f"**Age:** {panda_info['age']}\n"
+                      f"**Favorite Food:** {panda_info['favorite_food']}\n"
+                      f"**Favorite Activity:** {favorite_activity.title()}\n"
+                      f"**Current Mood:** {mood.title()} 😊",
+                inline=True
+            )
+            
+            # Level and experience section
+            progress_bar = "▰" * int(progress_percentage / 10) + "▱" * (10 - int(progress_percentage / 10))
+            embed.add_field(
+                name="🎆 Level & Experience",
+                value=f"**Level:** {self.get_level_title(level)}\n"
+                      f"**Current EXP:** {experience:,}\n"
+                      f"**Next Level:** {exp_needed:,} EXP\n"
+                      f"**Remaining:** {exp_remaining:,} EXP\n"
+                      f"**Progress:** {progress_bar} {progress_percentage:.1f}%",
+                inline=True
+            )
+            
+            # Happiness and care section
+            embed.add_field(
+                name="💖 Happiness & Care",
+                value=f"**Happiness:** {happiness_emoji} {happiness}%\n"
+                      f"**Days Together:** {days_together:,} days\n"
+                      f"**Total Feeds:** {total_feeds:,} 🍽️\n"
+                      f"**Total Plays:** {total_plays:,} 🎮\n"
+                      f"**Total Interactions:** {total_interactions:,}",
+                inline=True
+            )
+            
+            # Activity analysis section
+            if total_interactions > 0:
+                embed.add_field(
+                    name="📊 Activity Analysis",
+                    value=f"**Feed Ratio:** {feed_ratio:.1f}%\n"
+                          f"**Play Ratio:** {play_ratio:.1f}%\n"
+                          f"**Interactions/Day:** {total_interactions/max(days_together, 1):.1f}\n"
+                          f"**Care Style:** {'Balanced' if abs(feed_ratio - play_ratio) < 20 else 'Play-focused' if play_ratio > feed_ratio else 'Feed-focused'}",
+                    inline=True
+                )
+            
+            # Availability status section
+            feed_status = "Available now! 🍽️" if fed_cooldown >= 3600 else f"Ready in {self.format_time_remaining(int(3600 - fed_cooldown))}"
+            play_status = "Available now! 🎮" if play_cooldown >= 2700 else f"Ready in {self.format_time_remaining(int(2700 - play_cooldown))}"
+            
+            embed.add_field(
+                name="⏰ Current Availability",
+                value=f"**Feeding:** {feed_status}\n"
+                      f"**Playing:** {play_status}\n"
+                      f"**Last Fed:** {last_fed.strftime('%Y-%m-%d %H:%M UTC')}\n"
+                      f"**Last Played:** {last_played.strftime('%Y-%m-%d %H:%M UTC')}",
+                inline=True
+            )
+            
+            # Special achievements section
+            achievements = []
+            if level >= 10:
+                achievements.append("🌟 Reached Legend status!")
+            if happiness == 100:
+                achievements.append("✨ Perfect happiness achieved!")
+            if total_feeds >= 50:
+                achievements.append("🍽️ Gourmet feeder (50+ feeds)!")
+            if total_plays >= 50:
+                achievements.append("🎮 Master player (50+ plays)!")
+            if days_together >= 30:
+                achievements.append("📅 One month together!")
+            if days_together >= 100:
+                achievements.append("🎆 100 days of friendship!")
+            
+            if achievements:
+                embed.add_field(
+                    name="🏆 Achievements",
+                    value="\n".join(achievements[:4]),  # Show up to 4 achievements
+                    inline=False
+                )
+            
+            embed.set_thumbnail(url=panda_info["image_url"])
+            embed.set_footer(text=f"Adopted on: {adoption_date.strftime('%Y-%m-%d')} • Use /rename to change their name!")
+            
+            await interaction.followup.send(embed=embed)
+        
+        except Exception as e:
+            logger.error(f"PandaStats error for user {interaction.user.id}: {e}")
+            embed = discord.Embed(
+                title="🚨 Stats Error",
+                description="Could not load panda statistics. Please try again!",
+                color=0xe74c3c
+            )
+            await interaction.followup.send(embed=embed)
+    
+    @app_commands.command(name="rename", description="📝 Give your panda a custom name")
+    @app_commands.describe(
+        panda_id="ID of the panda to rename",
+        new_name="New custom name for your panda (3-20 characters)"
+    )
+    async def rename_cmd(self, interaction: discord.Interaction, panda_id: str, new_name: str):
+        await interaction.response.defer()
+        
+        try:
+            user_id = str(interaction.user.id)
+            user_pandas = get_user_pandas(user_id)
+            
+            # Find owned panda
+            owned_panda = None
+            for adopted in user_pandas:
+                if adopted["panda_id"] == panda_id:
+                    owned_panda = adopted
+                    break
+            
+            if not owned_panda:
+                embed = discord.Embed(
+                    title="❌ Panda Not Found",
+                    description=f"You don't own a panda with ID: `{panda_id}`",
+                    color=0xe74c3c
+                )
+                
+                if user_pandas:
+                    panda_list = "\n".join([f"• {get_panda_by_id(p['panda_id'])['name'] if get_panda_by_id(p['panda_id']) else 'Unknown'} (ID: `{p['panda_id']}`)" for p in user_pandas[:3]])
+                    embed.add_field(
+                        name="🐼 Your Pandas:",
+                        value=panda_list,
+                        inline=False
+                    )
+                
+                await interaction.followup.send(embed=embed)
+                return
+            
+            panda_info = get_panda_by_id(panda_id)
+            if not panda_info:
+                embed = discord.Embed(
+                    title="🚨 Data Error",
+                    description="Panda data temporarily unavailable. Please try again!",
+                    color=0xe74c3c
+                )
+                await interaction.followup.send(embed=embed)
+                return
+            
+            # Validate new name
+            new_name = new_name.strip()
+            if len(new_name) < 3:
+                embed = discord.Embed(
+                    title="❌ Name Too Short",
+                    description="Panda names must be at least 3 characters long!",
+                    color=0xe74c3c
+                )
+                embed.add_field(
+                    name="💡 Naming Tips:",
+                    value="• Use 3-20 characters\n• Be creative and loving!\n• Choose something special that fits their personality",
+                    inline=False
+                )
+                await interaction.followup.send(embed=embed)
+                return
+            
+            if len(new_name) > 20:
+                embed = discord.Embed(
+                    title="❌ Name Too Long",
+                    description="Panda names must be 20 characters or less!",
+                    color=0xe74c3c
+                )
+                embed.add_field(
+                    name="💡 Try a shorter version:",
+                    value=f"Your name '{new_name}' is {len(new_name)} characters.\nTry shortening it to fit within 20 characters!",
+                    inline=False
+                )
+                await interaction.followup.send(embed=embed)
+                return
+            
+            # Check for inappropriate content (basic filter)
+            forbidden_words = ["admin", "mod", "bot", "discord", "@everyone", "@here"]
+            if any(word in new_name.lower() for word in forbidden_words):
+                embed = discord.Embed(
+                    title="❌ Invalid Name",
+                    description="That name contains restricted words. Please choose a different name!",
+                    color=0xe74c3c
+                )
+                embed.add_field(
+                    name="💡 Suggestion:",
+                    value="Choose a creative, loving name that reflects your panda's personality!",
+                    inline=False
+                )
+                await interaction.followup.send(embed=embed)
+                return
+            
+            # Get old name for comparison
+            old_custom_name = owned_panda.get('custom_name', '')
+            old_display_name = old_custom_name if old_custom_name else panda_info['name']
+            
+            # Update the name
+            update_panda_stats(user_id, panda_id, "custom_name", new_name)
+            
+            # Give small coin reward for naming
+            coins_reward = 10
+            add_user_currency(user_id, coins_reward)
+            
+            # Create success embed
+            embed = discord.Embed(
+                title="🎉 Panda Renamed Successfully!",
+                description=f"Your panda is so happy with their new name! They're wagging their tail with excitement! 😊",
+                color=0x2ecc71
+            )
+            
+            embed.add_field(
+                name="📝 Name Change",
+                value=f"**Old Name:** {old_display_name}\n**New Name:** {new_name} ✨\n**Original Name:** {panda_info['name']} (preserved)",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="💰 Reward",
+                value=f"**Naming Bonus:** +{coins_reward} 🪙\n**Your Balance:** {get_user_currency(user_id)} 🪙",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="💡 Fun Fact",
+                value=f"**{new_name}** loves their new identity! You can see their custom name in `/mypandas` and their detailed stats in `/pandastats {panda_id}`.",
+                inline=False
+            )
+            
+            embed.set_thumbnail(url=panda_info["image_url"])
+            embed.set_footer(text="🐼 Custom names make the bond even more special! You can rename them anytime.")
+            
+            await interaction.followup.send(embed=embed)
+        
+        except Exception as e:
+            logger.error(f"Rename error for user {interaction.user.id}: {e}")
+            embed = discord.Embed(
+                title="🚨 Rename Error",
+                description="Something went wrong while renaming your panda. Please try again!",
+                color=0xe74c3c
             )
             await interaction.followup.send(embed=embed)
     
@@ -588,9 +921,12 @@ class AdoptionSystem(commands.Cog):
                 remaining_seconds = int(cooldown_seconds - time_since_fed.total_seconds())
                 time_remaining = self.format_time_remaining(remaining_seconds)
                 
+                custom_name = owned_panda.get('custom_name', '')
+                display_name = custom_name if custom_name else panda_info['name']
+                
                 embed = discord.Embed(
                     title="😋 Panda is Full!",
-                    description=f"**{panda_info['name']}** is still happily digesting their last delicious meal! 🥰",
+                    description=f"**{display_name}** is still happily digesting their last delicious meal! 🥰",
                     color=0xf39c12
                 )
                 embed.add_field(
@@ -659,9 +995,12 @@ class AdoptionSystem(commands.Cog):
             activity = random.choice(self.feed_activities).format(panda_info['favorite_food'])
             happiness_emoji, happiness_msg = self.get_happiness_message(new_happiness)
             
+            custom_name = owned_panda.get('custom_name', '')
+            display_name = custom_name if custom_name else panda_info['name']
+            
             embed = discord.Embed(
                 title="🍽️ Feeding Time Success!",
-                description=f"**{panda_info['name']}** {activity}! 😋\n\n{happiness_emoji} {happiness_msg}",
+                description=f"**{display_name}** {activity}! 😋\n\n{happiness_emoji} {happiness_msg}",
                 color=0x27ae60
             )
             
@@ -701,13 +1040,13 @@ class AdoptionSystem(commands.Cog):
             # Special messages
             special_messages = []
             if level_up:
-                special_messages.append(f"🎊 **LEVEL UP!** {panda_info['name']} is now {self.get_level_title(new_level)}!")
+                special_messages.append(f"🎊 **LEVEL UP!** {display_name} is now {self.get_level_title(new_level)}!")
             if streak_msg:
                 special_messages.append(streak_msg)
             if total_feeds % 10 == 0:
-                special_messages.append(f"🏆 **Feeding Milestone!** You've fed {panda_info['name']} {total_feeds} times!")
+                special_messages.append(f"🏆 **Feeding Milestone!** You've fed {display_name} {total_feeds} times!")
             if new_happiness == 100:
-                special_messages.append(f"✨ **Perfect Happiness!** {panda_info['name']} couldn't be happier!")
+                special_messages.append(f"✨ **Perfect Happiness!** {display_name} couldn't be happier!")
             
             if special_messages:
                 embed.add_field(
@@ -794,9 +1133,12 @@ class AdoptionSystem(commands.Cog):
                 remaining_seconds = int(cooldown_seconds - time_since_played.total_seconds())
                 time_remaining = self.format_time_remaining(remaining_seconds)
                 
+                custom_name = owned_panda.get('custom_name', '')
+                display_name = custom_name if custom_name else panda_info['name']
+                
                 embed = discord.Embed(
                     title="😴 Panda Needs Rest",
-                    description=f"**{panda_info['name']}** is taking a well-deserved nap after all that fun! 💤",
+                    description=f"**{display_name}** is taking a well-deserved nap after all that fun! 💤",
                     color=0xf39c12
                 )
                 embed.add_field(
@@ -869,6 +1211,9 @@ class AdoptionSystem(commands.Cog):
             activity = random.choice(self.play_activities)
             happiness_emoji, happiness_msg = self.get_happiness_message(new_happiness)
             
+            custom_name = owned_panda.get('custom_name', '')
+            display_name = custom_name if custom_name else panda_info['name']
+            
             # Special play event messages
             play_events = []
             if energy_bonus >= 8:
@@ -878,7 +1223,7 @@ class AdoptionSystem(commands.Cog):
             if new_happiness >= 95:
                 play_events.append("✨ Your panda is absolutely glowing with joy!")
             
-            description = f"You and **{panda_info['name']}** {activity}! 🎉\n\n{happiness_emoji} {happiness_msg}"
+            description = f"You and **{display_name}** {activity}! 🎉\n\n{happiness_emoji} {happiness_msg}"
             if play_events:
                 description += f"\n\n{' '.join(play_events)}"
             
@@ -928,13 +1273,13 @@ class AdoptionSystem(commands.Cog):
             # Special achievement messages
             achievements = []
             if level_up:
-                achievements.append(f"🎊 **LEVEL UP!** {panda_info['name']} achieved {self.get_level_title(new_level)}!")
+                achievements.append(f"🎊 **LEVEL UP!** {display_name} achieved {self.get_level_title(new_level)}!")
             if streak_msg:
                 achievements.append(streak_msg)
             if total_plays % 25 == 0:
-                achievements.append(f"🏆 **Play Master!** You've played with {panda_info['name']} {total_plays} times!")
+                achievements.append(f"🏆 **Play Master!** You've played with {display_name} {total_plays} times!")
             if new_happiness == 100 and current_happiness < 100:
-                achievements.append(f"💖 **Maximum Joy!** {panda_info['name']} reached peak happiness!")
+                achievements.append(f"💖 **Maximum Joy!** {display_name} reached peak happiness!")
             
             if achievements:
                 embed.add_field(
